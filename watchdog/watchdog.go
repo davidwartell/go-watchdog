@@ -20,7 +20,6 @@ package watchdog
 import (
 	"context"
 	"github.com/davidwartell/go-leakfree-timer/timer"
-	"github.com/davidwartell/go-logger-facade/logger"
 	"sync"
 	"time"
 )
@@ -103,7 +102,6 @@ func (i *Instance) watchdogLoop(maxRunTimeTimer *timer.Timer, sleepTimerPtr *tim
 			sleepTimerPtr.Read = true
 			if i.heartbeat != nil {
 				if ok := i.heartbeat.StillRunning(i.ctx); !ok {
-					logger.Instance().Error("watchdog heartbeat returned not ok - cancelling")
 					i.cancel()
 					return
 				}
@@ -111,7 +109,6 @@ func (i *Instance) watchdogLoop(maxRunTimeTimer *timer.Timer, sleepTimerPtr *tim
 		case <-maxRunTimeTimer.C:
 			// if max run time expired log error and cancel
 			maxRunTimeTimer.Read = true
-			logger.Instance().Error("watchdog exceeded max run time - cancelling", logger.Duration("maxRunTime", i.maxRunTime))
 			i.cancel()
 			return
 		case <-i.ctx.Done():
