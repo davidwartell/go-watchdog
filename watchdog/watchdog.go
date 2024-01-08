@@ -19,8 +19,8 @@ package watchdog
 
 import (
 	"context"
-	"github.com/davidwartell/go-commons-drw/logger"
 	"github.com/davidwartell/go-leakfree-timer/timer"
+	"github.com/davidwartell/go-logger-facade/logger"
 	"sync"
 	"time"
 )
