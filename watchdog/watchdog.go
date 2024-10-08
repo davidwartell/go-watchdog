@@ -55,7 +55,12 @@ func NewWatchDog(ctx context.Context, maxRunTime time.Duration) (*Instance, cont
 
 // NewWatchDogWithHeartbeat creates a new watch dog same NewWatchDog except in addition a callback is called every heartbeatInterval.
 // Cancel() should be called when you are done with the instance, or it will run until maxRunTime expires.
-func NewWatchDogWithHeartbeat(ctx context.Context, maxRunTime time.Duration, heartbeat Heartbeat, heartbeatInterval time.Duration) (*Instance, context.Context) {
+func NewWatchDogWithHeartbeat(
+	ctx context.Context,
+	maxRunTime time.Duration,
+	heartbeat Heartbeat,
+	heartbeatInterval time.Duration,
+) (*Instance, context.Context) {
 	wdCtx, wdCancel := context.WithCancel(ctx)
 	dog := &Instance{
 		ctx:               wdCtx,
@@ -80,7 +85,7 @@ func (i *Instance) run() {
 
 	var sleepTimer *timer.Timer
 	if i.heartbeat != nil && i.heartbeatInterval > 0 {
-		sleepTimer = new(timer.Timer)
+		sleepTimer = timer.NewTimer()
 		defer sleepTimer.Stop()
 	}
 
@@ -91,20 +96,22 @@ func (i *Instance) run() {
 	i.watchdogLoop(&maxRunTimeTimer, sleepTimer)
 }
 
-func (i *Instance) watchdogLoop(maxRunTimeTimer *timer.Timer, sleepTimerPtr *timer.Timer) {
+func (i *Instance) watchdogLoop(maxRunTimeTimer *timer.Timer, sleepTimer *timer.Timer) {
+	var sleepChan <-chan time.Time
+	if sleepTimer != nil {
+		sleepChan = sleepTimer.C
+	}
 	for {
-		if sleepTimerPtr != nil {
-			sleepTimerPtr.Reset(i.heartbeatInterval)
+		if sleepTimer != nil {
+			sleepTimer.Reset(i.heartbeatInterval)
 		}
 		select {
-		case <-sleepTimerPtr.C:
+		case <-sleepChan:
 			// this case will block forever on read of nil channel if i.heartbeat == nil || i.heartbeatInterval <= 0
-			sleepTimerPtr.Read = true
-			if i.heartbeat != nil {
-				if ok := i.heartbeat.StillRunning(i.ctx); !ok {
-					i.cancel()
-					return
-				}
+			sleepTimer.Read = true
+			if ok := i.heartbeat.StillRunning(i.ctx); !ok {
+				i.cancel()
+				return
 			}
 		case <-maxRunTimeTimer.C:
 			// if max run time expired log error and cancel
