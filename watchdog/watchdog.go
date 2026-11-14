@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022 by David Wartell. All Rights Reserved.
+ * Copyright (c) 2022-2026 by David Wartell. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package watchdog
 
 import (
 	"context"
-	"github.com/davidwartell/go-leakfree-timer/timer"
 	"sync"
 	"time"
 )
@@ -53,8 +52,9 @@ func NewWatchDog(ctx context.Context, maxRunTime time.Duration) (*Instance, cont
 	return NewWatchDogWithHeartbeat(ctx, maxRunTime, nil, 0)
 }
 
-// NewWatchDogWithHeartbeat creates a new watch dog same NewWatchDog except in addition a callback is called every heartbeatInterval.
-// Cancel() should be called when you are done with the instance, or it will run until maxRunTime expires.
+// NewWatchDogWithHeartbeat creates a new watch dog same NewWatchDog except in addition a callback is called every
+// heartbeatInterval. Cancel() should be called when you are done with the instance, or it will run until maxRunTime
+// expires.
 func NewWatchDogWithHeartbeat(
 	ctx context.Context,
 	maxRunTime time.Duration,
@@ -70,56 +70,47 @@ func NewWatchDogWithHeartbeat(
 		heartbeatInterval: heartbeatInterval,
 	}
 
-	dog.wg.Add(1)
-	go dog.run()
+	dog.wg.Go(dog.run)
 	return dog, wdCtx
 }
 
+// Cancel cancels the watchdog's context and waits for the watchdog to stop.
 func (i *Instance) Cancel() {
 	i.cancel()
 	i.wg.Wait()
 }
 
+// run waits until maxRunTime expires, a heartbeat reports the task stopped, or the context ends.
 func (i *Instance) run() {
-	defer i.wg.Done()
-
-	var sleepTimer *timer.Timer
-	if i.heartbeat != nil && i.heartbeatInterval > 0 {
-		sleepTimer = timer.NewTimer()
-		defer sleepTimer.Stop()
-	}
-
-	var maxRunTimeTimer timer.Timer
+	maxRunTimeTimer := time.NewTimer(i.maxRunTime)
 	defer maxRunTimeTimer.Stop()
-	maxRunTimeTimer.Reset(i.maxRunTime)
 
-	i.watchdogLoop(&maxRunTimeTimer, sleepTimer)
+	for i.waitOnce(maxRunTimeTimer.C) {
+	}
 }
 
-func (i *Instance) watchdogLoop(maxRunTimeTimer *timer.Timer, sleepTimer *timer.Timer) {
-	var sleepChan <-chan time.Time
-	if sleepTimer != nil {
-		sleepChan = sleepTimer.C
+// waitOnce waits for the next heartbeat, maxRunTime, or the end of the context, and reports whether to keep watching.
+//
+// Each wait gets its own heartbeat timer, so no timer is ever reset: the result does not depend on the Go 1.23 timer
+// semantics a consumer's go.mod may not select.
+func (i *Instance) waitOnce(maxRunTime <-chan time.Time) bool {
+	// a nil channel is never ready, so without a heartbeat only maxRunTime or the context end the wait
+	var heartbeatChan <-chan time.Time
+	if i.heartbeat != nil && i.heartbeatInterval > 0 {
+		heartbeatTimer := time.NewTimer(i.heartbeatInterval)
+		defer heartbeatTimer.Stop()
+		heartbeatChan = heartbeatTimer.C
 	}
-	for {
-		if sleepTimer != nil {
-			sleepTimer.Reset(i.heartbeatInterval)
+
+	select {
+	case <-heartbeatChan:
+		if i.heartbeat.StillRunning(i.ctx) {
+			return true
 		}
-		select {
-		case <-sleepChan:
-			// this case will block forever on read of nil channel if i.heartbeat == nil || i.heartbeatInterval <= 0
-			sleepTimer.Read = true
-			if ok := i.heartbeat.StillRunning(i.ctx); !ok {
-				i.cancel()
-				return
-			}
-		case <-maxRunTimeTimer.C:
-			// if max run time expired log error and cancel
-			maxRunTimeTimer.Read = true
-			i.cancel()
-			return
-		case <-i.ctx.Done():
-			return
-		}
+	case <-maxRunTime:
+	case <-i.ctx.Done():
+		return false
 	}
+	i.cancel()
+	return false
 }
